@@ -2,9 +2,11 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <math.h>
 
 static void skip_whitespace(const char **str) {
+    if (str == NULL || *str == NULL) return;
+    
     while (**str && isspace((unsigned char)**str)) {
         (*str)++;
     }
@@ -25,98 +27,132 @@ static int roman_digit_value(char c) {
 }
 
 
-int parse_roman_numeral(const char **str) {
+int parse_roman_numeral(const char **str, int *result) {
+    if (str == NULL || *str == NULL || result == NULL) {
+        return OVERSCANF_INVALID_INPUT;
+    }
+
     const char *ptr = *str;
-    int result = 0;
+    int total = 0;
     int prev_value = 0;
+    int max_repeat = 0;
+    char last_char = 0;
     
     skip_whitespace(&ptr);
     
-    if (!roman_digit_value(*ptr)) {
-        return -1;
+    if (!*ptr || !roman_digit_value(*ptr)) {
+        return OVERSCANF_INVALID_ROMAN;
     }
     
     while (*ptr && roman_digit_value(*ptr)) {
         int current_value = roman_digit_value(*ptr);
         
-        if (prev_value < current_value) {
-            result += current_value - 2 * prev_value;
+        if (last_char == *ptr) {
+            max_repeat++;
+            if (max_repeat > 3) {
+                return OVERSCANF_INVALID_ROMAN;
+            }
         } else {
-            result += current_value;
+            max_repeat = 1;
+            last_char = *ptr;
+        }
+        
+        if (prev_value < current_value) {
+            if (prev_value != 0 && (current_value / prev_value > 10)) {
+                return OVERSCANF_INVALID_ROMAN;
+            }
+            if (prev_value == 5 || prev_value == 50 || prev_value == 500) {
+                return OVERSCANF_INVALID_ROMAN;
+            }
+            total += current_value - 2 * prev_value;
+        } else {
+            total += current_value;
         }
         
         prev_value = current_value;
         ptr++;
     }
     
+    if (total <= 0) {
+        return OVERSCANF_INVALID_ROMAN;
+    }
+    
+    *result = total;
     *str = ptr;
-    return result;
+    return OVERSCANF_SUCCESS;
 }
 
 
-unsigned int parse_zeckendorf(const char **str) {
+int parse_zeckendorf(const char **str, unsigned int *result) {
+    if (str == NULL || *str == NULL || result == NULL) {
+        return OVERSCANF_INVALID_INPUT;
+    }
+
     const char *ptr = *str;
-    unsigned int result = 0;
     
     skip_whitespace(&ptr);
     
-    unsigned int fib[50];
-    fib[0] = 1;
-    fib[1] = 2;
-    for (int i = 2; i < 50; i++) {
-        fib[i] = fib[i-1] + fib[i-2];
-        if (fib[i] < fib[i-1]) break;
+    int has_ones = 0;
+    const char *temp = ptr;
+    while (*temp && (*temp == '0' || *temp == '1')) {
+        if (*temp == '1') has_ones = 1;
+        temp++;
     }
     
-    int fib_index = 0;
-    int last_bit_was_one = 0;
-    int has_ones = 0;
+    if (!has_ones) {
+        return OVERSCANF_INVALID_ZECKENDORF;
+    }
+    
+    unsigned int value = 0;
+    int last_was_one = 0;
+    int bit_count = 0;
     
     while (*ptr && (*ptr == '0' || *ptr == '1')) {
         if (*ptr == '1') {
-            if (last_bit_was_one) {
-                return (unsigned int)-1;
+            if (last_was_one) {
+                return OVERSCANF_INVALID_ZECKENDORF;
             }
-            
-            if (fib_index < 50) {
-                result += fib[fib_index];
-            }
-            last_bit_was_one = 1;
-            has_ones = 1;
+            value = (value << 1) | 1;
+            last_was_one = 1;
         } else {
-            last_bit_was_one = 0;
+            value = value << 1;
+            last_was_one = 0;
         }
-        
         ptr++;
-        fib_index++;
+        bit_count++;
+    }
+
+    if (last_was_one && bit_count > 1) {
+        return OVERSCANF_INVALID_ZECKENDORF;
     }
     
-    if (!has_ones || last_bit_was_one) {
-        return (unsigned int)-1;
-    }
-    
+    *result = value;
     *str = ptr;
-    return result;
+    return OVERSCANF_SUCCESS;
 }
 
 
-int parse_custom_base(const char **str, int base, int uppercase) {
+int parse_custom_base(const char **str, int base, int uppercase, int *result) {
+    if (str == NULL || *str == NULL || result == NULL) {
+        return OVERSCANF_INVALID_INPUT;
+    }
+
     const char *ptr = *str;
-    int result = 0;
+    int total = 0;
     int sign = 1;
     int digit_value;
     
     skip_whitespace(&ptr);
+    
+    if (base < 2 || base > 36) {
+        return OVERSCANF_INVALID_BASE;
+    }
     
     if (*ptr == '-') {
         sign = -1;
         ptr++;
     } else if (*ptr == '+') {
         ptr++;
-    }
-    
-    if (base < 2 || base > 36) {
-        base = 10;
     }
     
     int has_digits = 0;
@@ -139,142 +175,226 @@ int parse_custom_base(const char **str, int base, int uppercase) {
             break;
         }
         
-        result = result * base + digit_value;
+        if (total > (INT_MAX - digit_value) / base) {
+            return OVERSCANF_INVALID_INPUT;
+        }
+        
+        total = total * base + digit_value;
         has_digits = 1;
         ptr++;
     }
     
     if (!has_digits) {
-        return 0;
+        return OVERSCANF_INVALID_INPUT;
     }
     
+    *result = sign * total;
     *str = ptr;
-    return sign * result;
+    return OVERSCANF_SUCCESS;
 }
 
 
-static int parse_standard_format(const char **str, FILE *stream, const char *format, va_list args) {
+static int parse_standard_specifier_simple(const char **str_ptr, FILE *stream, 
+                                          const char *specifier, int suppress, void *arg) {
+    char format[32];
+    snprintf(format, sizeof(format), "%%%s%s", suppress ? "*" : "", specifier);
+    
     if (stream) {
-        return fscanf(stream, format, va_arg(args, void*));
+        if (suppress) {
+            return fscanf(stream, format);
+        } else {
+            return fscanf(stream, format, arg);
+        }
     } else {
-        return sscanf(*str, format, va_arg(args, void*));
+        if (suppress) {
+            return sscanf(*str_ptr, format);
+        } else {
+            int result = sscanf(*str_ptr, format, arg);
+            if (result == 1) {
+                const char *temp = *str_ptr;
+                skip_whitespace(&temp);
+                
+                if (strcmp(specifier, "s") == 0) {
+                    while (*temp && !isspace((unsigned char)*temp)) {
+                        temp++;
+                    }
+                } else if (strchr("diu", specifier[0])) {
+                    if (*temp == '+' || *temp == '-') temp++;
+                    while (*temp && isdigit((unsigned char)*temp)) {
+                        temp++;
+                    }
+                } else if (strchr("feEgG", specifier[0])) {
+                    if (*temp == '+' || *temp == '-') temp++;
+                    while (*temp && isdigit((unsigned char)*temp)) {
+                        temp++;
+                    }
+                    if (*temp == '.') {
+                        temp++;
+                        while (*temp && isdigit((unsigned char)*temp)) {
+                            temp++;
+                        }
+                    }
+                }
+                
+                skip_whitespace(&temp);
+                *str_ptr = temp;
+            }
+            return result;
+        }
     }
 }
 
 
 static int voverfscanf(FILE *stream, const char *str, const char *format, va_list args) {
+    if (format == NULL) {
+        return OVERSCANF_INVALID_FORMAT;
+    }
+
     const char *fmt_ptr = format;
     const char *str_ptr = str;
     int count = 0;
-    va_list args_copy;
     
     while (*fmt_ptr) {
         if (*fmt_ptr == '%') {
             fmt_ptr++;
             
-            while (*fmt_ptr && strchr(" *", *fmt_ptr)) {
-                if (*fmt_ptr == '*') {
-                    fmt_ptr++;
-                    break;
+            if (*fmt_ptr == '%') {
+                if (stream) {
+                    int c = fgetc(stream);
+                    if (c != '%') {
+                        if (c != EOF) ungetc(c, stream);
+                        return count;
+                    }
+                } else {
+                    if (*str_ptr != '%') {
+                        return count;
+                    }
+                    str_ptr++;
                 }
+                fmt_ptr++;
+                continue;
+            }
+            
+            int suppress = 0;
+            int width = 0;
+            
+            if (*fmt_ptr == '*') {
+                suppress = 1;
+                fmt_ptr++;
+            }
+            
+            while (isdigit((unsigned char)*fmt_ptr)) {
+                width = width * 10 + (*fmt_ptr - '0');
                 fmt_ptr++;
             }
             
             if (fmt_ptr[0] == 'R' && fmt_ptr[1] == 'o') {
-                int *value_ptr = va_arg(args, int*);
-                int value;
-                
-                if (stream) {
-                    char buffer[256];
-                    if (fscanf(stream, "%255s", buffer) != 1) {
-                        return count > 0 ? count : OVERSCANF_EOF;
-                    }
-                    const char *buf_ptr = buffer;
-                    value = parse_roman_numeral(&buf_ptr);
-                } else {
-                    value = parse_roman_numeral(&str_ptr);
-                }
-                
-                if (value >= 0) {
-                    *value_ptr = value;
-                    count++;
-                }
                 fmt_ptr += 2;
+                
+                if (!suppress) {
+                    int *value_ptr = va_arg(args, int*);
+                    int value;
+                    int status;
+                    
+                    if (stream) {
+                        char buffer[256];
+                        if (fscanf(stream, "%255s", buffer) != 1) {
+                            return count > 0 ? count : OVERSCANF_EOF;
+                        }
+                        const char *buf_ptr = buffer;
+                        status = parse_roman_numeral(&buf_ptr, &value);
+                    } else {
+                        status = parse_roman_numeral(&str_ptr, &value);
+                    }
+                    
+                    if (status == OVERSCANF_SUCCESS) {
+                        *value_ptr = value;
+                        count++;
+                    }
+                }
                 
             } else if (fmt_ptr[0] == 'Z' && fmt_ptr[1] == 'r') {
-                unsigned int *value_ptr = va_arg(args, unsigned int*);
-                unsigned int value;
-                
-                if (stream) {
-                    char buffer[256];
-                    if (fscanf(stream, "%255s", buffer) != 1) {
-                        return count > 0 ? count : OVERSCANF_EOF;
-                    }
-                    const char *buf_ptr = buffer;
-                    value = parse_zeckendorf(&buf_ptr);
-                } else {
-                    value = parse_zeckendorf(&str_ptr);
-                }
-                
-                if (value != (unsigned int)-1) {
-                    *value_ptr = value;
-                    count++;
-                }
                 fmt_ptr += 2;
+                
+                if (!suppress) {
+                    unsigned int *value_ptr = va_arg(args, unsigned int*);
+                    unsigned int value;
+                    int status;
+                    
+                    if (stream) {
+                        char buffer[256];
+                        if (fscanf(stream, "%255s", buffer) != 1) {
+                            return count > 0 ? count : OVERSCANF_EOF;
+                        }
+                        const char *buf_ptr = buffer;
+                        status = parse_zeckendorf(&buf_ptr, &value);
+                    } else {
+                        status = parse_zeckendorf(&str_ptr, &value);
+                    }
+                    
+                    if (status == OVERSCANF_SUCCESS) {
+                        *value_ptr = value;
+                        count++;
+                    }
+                }
                 
             } else if (fmt_ptr[0] == 'C' && (fmt_ptr[1] == 'v' || fmt_ptr[1] == 'V')) {
-                int *value_ptr = va_arg(args, int*);
-                int base = va_arg(args, int);
-                int uppercase = (fmt_ptr[1] == 'V');
-                int value;
-                
-                if (stream) {
-                    char buffer[256];
-                    if (fscanf(stream, "%255s", buffer) != 1) {
-                        return count > 0 ? count : OVERSCANF_EOF;
-                    }
-                    const char *buf_ptr = buffer;
-                    value = parse_custom_base(&buf_ptr, base, uppercase);
-                } else {
-                    value = parse_custom_base(&str_ptr, base, uppercase);
-                }
-                
-                *value_ptr = value;
-                count++;
                 fmt_ptr += 2;
                 
-            } else {
-                char specifier[8] = { '%' };
-                int spec_len = 1;
-                
-                while (*fmt_ptr && !isalpha((unsigned char)*fmt_ptr)) {
-                    if (spec_len < 6) {
-                        specifier[spec_len++] = *fmt_ptr;
+                if (!suppress) {
+                    int *value_ptr = va_arg(args, int*);
+                    int base = va_arg(args, int);
+                    int uppercase_flag = (fmt_ptr[-1] == 'V');
+                    int value;
+                    int status;
+                    
+                    if (stream) {
+                        char buffer[256];
+                        if (fscanf(stream, "%255s", buffer) != 1) {
+                            return count > 0 ? count : OVERSCANF_EOF;
+                        }
+                        const char *buf_ptr = buffer;
+                        status = parse_custom_base(&buf_ptr, base, uppercase_flag, &value);
+                    } else {
+                        status = parse_custom_base(&str_ptr, base, uppercase_flag, &value);
                     }
-                    fmt_ptr++;
+                    
+                    if (status == OVERSCANF_SUCCESS) {
+                        *value_ptr = value;
+                        count++;
+                    }
                 }
                 
-                if (*fmt_ptr) {
-                    specifier[spec_len++] = *fmt_ptr;
-                    specifier[spec_len] = '\0';
-                    fmt_ptr++;
+            } else {
+                char spec_char = *fmt_ptr;
+                fmt_ptr++;
+                
+                if (!suppress) {
+                    void *arg = va_arg(args, void*);
+                    char spec_str[2] = { spec_char, '\0' };
+                    int result = parse_standard_specifier_simple(&str_ptr, stream, spec_str, suppress, arg);
                     
-                    va_copy(args_copy, args);
-                    int scan_result = parse_standard_format(&str_ptr, stream, specifier, args_copy);
-                    va_end(args_copy);
-                    
-                    if (scan_result == 1) {
+                    if (result == 1) {
                         count++;
-                        if (!stream && str_ptr) {
-                            while (*str_ptr && !isspace((unsigned char)*str_ptr)) {
-                                str_ptr++;
-                            }
-                            skip_whitespace(&str_ptr);
-                        }
-                    } else if (scan_result == EOF) {
+                    } else if (result == EOF) {
                         return count > 0 ? count : OVERSCANF_EOF;
                     }
+                } else {
+                    char spec_str[2] = { spec_char, '\0' };
+                    parse_standard_specifier_simple(&str_ptr, stream, spec_str, suppress, NULL);
                 }
+            }
+        } else if (isspace((unsigned char)*fmt_ptr)) {
+            skip_whitespace(&fmt_ptr);
+            if (stream) {
+                int c;
+                do {
+                    c = fgetc(stream);
+                    if (c == EOF) return count;
+                } while (isspace(c));
+                ungetc(c, stream);
+            } else {
+                skip_whitespace(&str_ptr);
             }
         } else {
             if (stream) {
@@ -298,6 +418,10 @@ static int voverfscanf(FILE *stream, const char *str, const char *format, va_lis
 
 
 int overfscanf(FILE *stream, const char *format, ...) {
+    if (stream == NULL || format == NULL) {
+        return OVERSCANF_INVALID_INPUT;
+    }
+
     va_list args;
     va_start(args, format);
     int result = voverfscanf(stream, NULL, format, args);
@@ -307,6 +431,10 @@ int overfscanf(FILE *stream, const char *format, ...) {
 
 
 int oversscanf(const char *str, const char *format, ...) {
+    if (str == NULL || format == NULL) {
+        return OVERSCANF_INVALID_INPUT;
+    }
+
     va_list args;
     va_start(args, format);
     int result = voverfscanf(NULL, str, format, args);
