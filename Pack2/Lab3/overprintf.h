@@ -2,6 +2,7 @@
 #define OVERPRINTF_H
 
 #include <stdio.h>
+#include <stddef.h>
 
 typedef enum {
     OVERPRINTF_SUCCESS = 0,
@@ -10,7 +11,8 @@ typedef enum {
     OVERPRINTF_INVALID_ROMAN,
     OVERPRINTF_INVALID_STRING,
     OVERPRINTF_BUFFER_OVERFLOW,
-    OVERPRINTF_NULL_POINTER
+    OVERPRINTF_NULL_POINTER,
+    OVERPRINTF_MEMORY_ERROR
 } overprintf_status_t;
 
 int overfprintf(FILE *stream, const char *format, ...);

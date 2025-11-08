@@ -3,8 +3,11 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include <math.h>
+#include <limits.h>
+#include <stdint.h>
 #include "overprintf.h"
+
+#define BUFFER_SIZE 1024
 
 
 overprintf_status_t int_to_roman(int value, char *buffer, size_t buffer_size) {
@@ -15,7 +18,7 @@ overprintf_status_t int_to_roman(int value, char *buffer, size_t buffer_size) {
         return OVERPRINTF_NULL_POINTER;
     }
     
-    struct {
+    static const struct {
         int value;
         const char *numeral;
     } romans[] = {
@@ -77,25 +80,34 @@ overprintf_status_t uint_to_zeckendorf(unsigned int value, char *buffer, size_t 
     size_t pos = 0;
     unsigned int temp = value;
     
+    char temp_buf[50];
+    int temp_pos = 0;
+    
     for (int i = fib_count - 1; i >= 0; i--) {
         if (temp >= fib[i]) {
-            if (pos + 2 > buffer_size) {
+            if (temp_pos >= 49) {
                 buffer[0] = '\0';
                 return OVERPRINTF_BUFFER_OVERFLOW;
             }
-            buffer[pos++] = '1';
+            temp_buf[temp_pos++] = '1';
             temp -= fib[i];
         } else {
-            if (i < fib_count - 1) {
-                if (pos + 2 > buffer_size) {
-                    buffer[0] = '\0';
-                    return OVERPRINTF_BUFFER_OVERFLOW;
-                }
-                buffer[pos++] = '0';
+            if (temp_pos >= 49) {
+                buffer[0] = '\0';
+                return OVERPRINTF_BUFFER_OVERFLOW;
             }
+            temp_buf[temp_pos++] = '0';
         }
     }
-
+    
+    for (int i = temp_pos - 1; i >= 0; i--) {
+        if (pos + 2 > buffer_size) {
+            buffer[0] = '\0';
+            return OVERPRINTF_BUFFER_OVERFLOW;
+        }
+        buffer[pos++] = temp_buf[i];
+    }
+    
     if (pos + 2 > buffer_size) {
         buffer[0] = '\0';
         return OVERPRINTF_BUFFER_OVERFLOW;
@@ -114,8 +126,9 @@ overprintf_status_t int_to_custom_base(int value, int base, int uppercase, char 
     if (!buffer || buffer_size == 0) {
         return OVERPRINTF_NULL_POINTER;
     }
+    
     int is_negative = value < 0;
-    unsigned int abs_value = is_negative ? -value : value;
+    unsigned int abs_value = is_negative ? (unsigned int)(-value) : (unsigned int)value;
     char temp[65];
     int pos = sizeof(temp) - 1;
     temp[pos] = '\0';
@@ -137,13 +150,16 @@ overprintf_status_t int_to_custom_base(int value, int base, int uppercase, char 
             abs_value /= base;
         }
     }
+    
     if (is_negative) {
         temp[--pos] = '-';
     }
+    
     size_t len = sizeof(temp) - pos;
     if (len >= buffer_size) {
         return OVERPRINTF_BUFFER_OVERFLOW;
     }
+    
     strcpy(buffer, temp + pos);
     return OVERPRINTF_SUCCESS;
 }
@@ -169,7 +185,7 @@ overprintf_status_t string_to_int_base(const char *str, int base, int uppercase,
         str++;
     }
     
-    int value = 0;
+    long value = 0;
     int valid_digits = 0;
     
     while (*str) {
@@ -187,20 +203,29 @@ overprintf_status_t string_to_int_base(const char *str, int base, int uppercase,
         } else {
             break;
         }
+        
         if (digit >= base) {
             break;
         }
-        if (value > (INT_MAX - digit) / base) {
+        
+        if (value > (LONG_MAX - digit) / base) {
             return OVERPRINTF_INVALID_STRING;
         }
+        
         value = value * base + digit;
         valid_digits++;
         str++;
     }
+    
     if (valid_digits == 0) {
         return OVERPRINTF_INVALID_STRING;
     }
-    *result = value * sign;
+    
+    if (value > INT_MAX || value < INT_MIN) {
+        return OVERPRINTF_INVALID_STRING;
+    }
+    
+    *result = (int)(value * sign);
     return OVERPRINTF_SUCCESS;
 }
 
@@ -209,11 +234,14 @@ overprintf_status_t memory_dump(const void *ptr, size_t size, char *buffer, size
     if (!ptr || !buffer) {
         return OVERPRINTF_NULL_POINTER;
     }
+    
     const unsigned char *bytes = (const unsigned char *)ptr;
     size_t needed_size = size * 9;
+    
     if (buffer_size < needed_size) {
         return OVERPRINTF_BUFFER_OVERFLOW;
     }
+    
     size_t pos = 0;
     for (size_t i = 0; i < size; i++) {
         for (int bit = 7; bit >= 0; bit--) {
@@ -231,70 +259,151 @@ overprintf_status_t memory_dump(const void *ptr, size_t size, char *buffer, size
 static overprintf_status_t process_specifier(const char **format, va_list *args, 
                                            char *output, size_t output_size) {
     const char *fmt = *format;
+    
     fmt++;
     
-    if (*fmt == 'R' && *(fmt + 1) == 'o') {
-        *format += 2;
-        int value = va_arg(*args, int);
-        return int_to_roman(value, output, output_size);
+    if (!*fmt) {
+        return OVERPRINTF_INVALID_FORMAT;
     }
-    else if (*fmt == 'Z' && *(fmt + 1) == 'r') {
-        *format += 2;
-        unsigned int value = va_arg(*args, unsigned int);
-        return uint_to_zeckendorf(value, output, output_size);
-    }
-    else if (*fmt == 'C' && (*(fmt + 1) == 'v' || *(fmt + 1) == 'V')) {
-        *format += 2;
-        int value = va_arg(*args, int);
-        int base = va_arg(*args, int);
-        int uppercase = (*(fmt + 1) == 'V');
-        return int_to_custom_base(value, base, uppercase, output, output_size);
-    }
-    else if (*fmt == 't' && (*(fmt + 1) == 'o' || *(fmt + 1) == 'O')) {
-        *format += 2;
-        const char *str = va_arg(*args, const char *);
-        int base = va_arg(*args, int);
-        int uppercase = (*(fmt + 1) == 'O');
-        int result;
-        overprintf_status_t status = string_to_int_base(str, base, uppercase, &result);
-        if (status == OVERPRINTF_SUCCESS) {
-            snprintf(output, output_size, "%d", result);
+    
+    if (strchr("diuoxXfcsSp%", *fmt)) {
+        char specifier = *fmt;
+        (*format) += 2;
+        
+        char temp[256];
+        
+        switch (specifier) {
+            case 'd':
+            case 'i': {
+                int value = va_arg(*args, int);
+                snprintf(temp, sizeof(temp), "%d", value);
+                break;
+            }
+            case 'u': {
+                unsigned int value = va_arg(*args, unsigned int);
+                snprintf(temp, sizeof(temp), "%u", value);
+                break;
+            }
+            case 'x': {
+                unsigned int value = va_arg(*args, unsigned int);
+                snprintf(temp, sizeof(temp), "%x", value);
+                break;
+            }
+            case 'X': {
+                unsigned int value = va_arg(*args, unsigned int);
+                snprintf(temp, sizeof(temp), "%X", value);
+                break;
+            }
+            case 'o': {
+                unsigned int value = va_arg(*args, unsigned int);
+                snprintf(temp, sizeof(temp), "%o", value);
+                break;
+            }
+            case 'f': {
+                double value = va_arg(*args, double);
+                snprintf(temp, sizeof(temp), "%f", value);
+                break;
+            }
+            case 'c': {
+                char value = (char)va_arg(*args, int);
+                temp[0] = value;
+                temp[1] = '\0';
+                break;
+            }
+            case 's': {
+                const char *value = va_arg(*args, const char *);
+                if (!value) {
+                    strcpy(temp, "(null)");
+                } else {
+                    strncpy(temp, value, sizeof(temp) - 1);
+                    temp[sizeof(temp) - 1] = '\0';
+                }
+                break;
+            }
+            case 'p': {
+                void *value = va_arg(*args, void *);
+                snprintf(temp, sizeof(temp), "%p", value);
+                break;
+            }
+            case '%': {
+                strcpy(temp, "%");
+                break;
+            }
+            default:
+                return OVERPRINTF_INVALID_FORMAT;
         }
-        return status;
+        
+        strncpy(output, temp, output_size - 1);
+        output[output_size - 1] = '\0';
+        return OVERPRINTF_SUCCESS;
     }
-    else if (*fmt == 'm') {
-        fmt++;
-        if (*fmt == 'i') {
-            *format += 2;
+    
+    if (fmt[0] && fmt[1]) {
+        if (fmt[0] == 'R' && fmt[1] == 'o') {
+            *format += 3;
+            int value = va_arg(*args, int);
+            return int_to_roman(value, output, output_size);
+        }
+        else if (fmt[0] == 'Z' && fmt[1] == 'r') {
+            *format += 3;
+            unsigned int value = va_arg(*args, unsigned int);
+            return uint_to_zeckendorf(value, output, output_size);
+        }
+        else if (fmt[0] == 'C' && fmt[1] == 'v') {
+            *format += 3;
+            int value = va_arg(*args, int);
+            int base = va_arg(*args, int);
+            return int_to_custom_base(value, base, 0, output, output_size);
+        }
+        else if (fmt[0] == 'C' && fmt[1] == 'V') {
+            *format += 3;
+            int value = va_arg(*args, int);
+            int base = va_arg(*args, int);
+            return int_to_custom_base(value, base, 1, output, output_size);
+        }
+        else if (fmt[0] == 't' && fmt[1] == 'o') {
+            *format += 3;
+            const char *str = va_arg(*args, const char *);
+            int base = va_arg(*args, int);
+            int result;
+            overprintf_status_t status = string_to_int_base(str, base, 0, &result);
+            if (status == OVERPRINTF_SUCCESS) {
+                snprintf(output, output_size, "%d", result);
+            }
+            return status;
+        }
+        else if (fmt[0] == 't' && fmt[1] == 'O') {
+            *format += 3;
+            const char *str = va_arg(*args, const char *);
+            int base = va_arg(*args, int);
+            int result;
+            overprintf_status_t status = string_to_int_base(str, base, 1, &result);
+            if (status == OVERPRINTF_SUCCESS) {
+                snprintf(output, output_size, "%d", result);
+            }
+            return status;
+        }
+        else if (fmt[0] == 'm' && fmt[1] == 'i') {
+            *format += 3;
             int value = va_arg(*args, int);
             return memory_dump(&value, sizeof(int), output, output_size);
         }
-        else if (*fmt == 'u') {
-            *format += 2;
+        else if (fmt[0] == 'm' && fmt[1] == 'u') {
+            *format += 3;
             unsigned int value = va_arg(*args, unsigned int);
             return memory_dump(&value, sizeof(unsigned int), output, output_size);
         }
-        else if (*fmt == 'd') {
-            *format += 2;
+        else if (fmt[0] == 'm' && fmt[1] == 'd') {
+            *format += 3;
             double value = va_arg(*args, double);
             return memory_dump(&value, sizeof(double), output, output_size);
         }
-        else if (*fmt == 'f') {
-            *format += 2;
+        else if (fmt[0] == 'm' && fmt[1] == 'f') {
+            *format += 3;
             float value = va_arg(*args, double);
             return memory_dump(&value, sizeof(float), output, output_size);
         }
     }
-    else if (*fmt == '%') {
-        *format += 1;
-        if (output_size >= 2) {
-            output[0] = '%';
-            output[1] = '\0';
-            return OVERPRINTF_SUCCESS;
-        }
-        return OVERPRINTF_BUFFER_OVERFLOW;
-    }
-    
     return OVERPRINTF_INVALID_FORMAT;
 }
 
@@ -306,6 +415,7 @@ int overfprintf(FILE *stream, const char *format, ...) {
     
     va_list args;
     va_start(args, format);
+    
     int total_written = 0;
     const char *current = format;
     
@@ -324,14 +434,9 @@ int overfprintf(FILE *stream, const char *format, ...) {
         if (status == OVERPRINTF_SUCCESS) {
             fputs(spec_buffer, stream);
             total_written += strlen(spec_buffer);
-        } else if (status == OVERPRINTF_INVALID_FORMAT) {
+        } else {
             fputc('%', stream);
             total_written++;
-            current++;
-        } else {
-            const char *error_msg = "[FORMAT_ERROR]";
-            fputs(error_msg, stream);
-            total_written += strlen(error_msg);
             current = spec_start + 1;
         }
     }
@@ -348,7 +453,8 @@ int oversprintf(char *str, const char *format, ...) {
     
     va_list args;
     va_start(args, format);
-    char buffer[1024];
+    
+    char buffer[BUFFER_SIZE];
     size_t pos = 0;
     const char *current = format;
     
@@ -364,29 +470,19 @@ int oversprintf(char *str, const char *format, ...) {
         
         if (status == OVERPRINTF_SUCCESS) {
             size_t spec_len = strlen(spec_buffer);
-            if (pos + spec_len < sizeof(buffer) - 1) {
+            if (pos + spec_len < sizeof(buffer)) {
                 strcpy(buffer + pos, spec_buffer);
                 pos += spec_len;
             } else {
                 break;
             }
-        } else if (status == OVERPRINTF_INVALID_FORMAT) {
+        } else {
             if (pos < sizeof(buffer) - 1) {
                 buffer[pos++] = '%';
-                current++;
+                current = spec_start + 1;
             } else {
                 break;
             }
-        } else {
-            const char *error_msg = "[FORMAT_ERROR]";
-            size_t error_len = strlen(error_msg);
-            if (pos + error_len < sizeof(buffer) - 1) {
-                strcpy(buffer + pos, error_msg);
-                pos += error_len;
-            } else {
-                break;
-            }
-            current = spec_start + 1;
         }
     }
     
