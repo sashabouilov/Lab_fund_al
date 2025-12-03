@@ -1,4 +1,3 @@
-// file_processor.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,7 +5,6 @@
 
 #include "file_processor.h"
 
-// Буфер для чтения строк
 #define MAX_LINE_LENGTH 1024
 
 int process_file(const char *input_filename, const char *output_filename, char operation) {
@@ -30,7 +28,6 @@ int process_file(const char *input_filename, const char *output_filename, char o
     char line[MAX_LINE_LENGTH];
     ProcessingStatus status = PROC_SUCCESS;
 
-    // Выбираем функцию обработки в зависимости от операции
     ProcessingStatus (*process_func)(const char *, FILE *) = NULL;
     switch (operation) {
         case 'd': process_func = process_line_d; break;
@@ -44,7 +41,6 @@ int process_file(const char *input_filename, const char *output_filename, char o
 
     if (status == PROC_SUCCESS && process_func != NULL) {
         while (fgets(line, sizeof(line), input) != NULL) {
-            // Убираем символ новой строки, если есть
             size_t len = strlen(line);
             if (len > 0 && line[len - 1] == '\n') {
                 line[len - 1] = '\0';
