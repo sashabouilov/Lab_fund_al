@@ -2,7 +2,7 @@
 #define PRIME_FINDER_H
 
 #include <stdint.h>
-#include <math.h>
+#include <stddef.h>
 
 typedef enum {
     SUCCESS = 0,
@@ -11,6 +11,7 @@ typedef enum {
 } status_t;
 
 status_t find_nth_prime(uint32_t n, uint64_t* result);
-status_t validate_input(int t, int* queries, int query_count);
+status_t validate_input(int t, const int* queries, int query_count);
+void print_results(const uint64_t* results, const int* queries, int count, const status_t* statuses);
 
 #endif
