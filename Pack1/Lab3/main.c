@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <errno.h>
 #include "operations.h"
 
 
@@ -24,6 +25,10 @@ bool parse_double(const char *str, double *value) {
         return false;
     }
     
+    if (isnan(result) || isinf(result)) {
+        return false;
+    }
+    
     *value = result;
     return true;
 }
@@ -36,7 +41,8 @@ bool parse_int(const char *str, int *value) {
     errno = 0;
     long result = strtol(str, &endptr, 10);
     
-    if (endptr == str || *endptr != '\0' || errno != 0 || result < -2147483648 || result > 2147483647) {
+    if (endptr == str || *endptr != '\0' || errno != 0 || 
+        result < -2147483648 || result > 2147483647) {
         return false;
     }
     
@@ -72,7 +78,17 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         
-        solve_quadratic_with_permutations(epsilon, a, b, c);
+        PermutationsResult result;
+        QuadraticStatus status = solve_quadratic_with_permutations(epsilon, a, b, c, &result);
+        
+        if (status == QUADRATIC_SUCCESS) {
+            print_permutations_result(&result);
+        } else {
+            printf("Error solving permutations: ");
+            print_quadratic_status(status);
+            printf("\n");
+            return 1;
+        }
     }
     else if (strcmp(flag, "-m") == 0 || strcmp(flag, "/m") == 0) {
         if (argc != 4) {
@@ -91,7 +107,15 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         
-        check_multiple(num1, num2);
+        bool is_multiple;
+        MultipleStatus status = check_multiple(num1, num2, &is_multiple);
+        
+        print_multiple_result(num1, num2, is_multiple, status);
+        printf("\n");
+        
+        if (status != MULTIPLE_SUCCESS) {
+            return 1;
+        }
     }
     else if (strcmp(flag, "-t") == 0 || strcmp(flag, "/t") == 0) {
         if (argc != 6) {
@@ -116,7 +140,15 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         
-        check_right_triangle(epsilon, a, b, c);
+        bool is_right_triangle;
+        TriangleStatus status = check_right_triangle(epsilon, a, b, c, &is_right_triangle);
+        
+        print_triangle_result(a, b, c, is_right_triangle, status);
+        printf("\n");
+        
+        if (status != TRIANGLE_SUCCESS) {
+            return 1;
+        }
     }
     else {
         fprintf(stderr, "Error: Unknown flag '%s'\n", flag);
